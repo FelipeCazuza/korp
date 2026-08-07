@@ -1,0 +1,25 @@
+# Binários e artefatos de build
+bin/
+http-server-projeto-korp
+coverage.out
+*.log
+
+# Variáveis de ambiente locais
+.env
+.env.*
+!.env.example
+
+# Segredos locais
+secrets/*
+!secrets/.gitkeep
+
+# Ansible Vault e arquivos locais
+ansible/vars/vault.yml
+.vault-pass
+*.retry
+
+# Editores e sistema operacional
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

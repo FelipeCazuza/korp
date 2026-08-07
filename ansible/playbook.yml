@@ -1,0 +1,377 @@
+---
+- name: Provisionar ambiente do Projeto Korp
+  hosts: projeto_korp
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - vars/main.yml
+    - vars/vault.yml
+
+  pre_tasks:
+    - name: Coletar informações do sistema
+      ansible.builtin.setup:
+      become: false
+
+  tasks:
+    # =====================================================
+    # Validação e instalação do Docker
+    # =====================================================
+
+    - name: Verificar se o Docker está instalado
+      ansible.builtin.command:
+        argv:
+          - docker
+          - --version
+      register: docker_check
+      changed_when: false
+      failed_when: false
+
+    - name: Verificar se o Docker Compose está instalado
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - version
+      register: docker_compose_check
+      changed_when: false
+      failed_when: false
+
+    - name: Definir se o Docker precisa ser instalado
+      ansible.builtin.set_fact:
+        docker_install_required: >-
+          {{
+            docker_check.rc != 0
+            or docker_compose_check.rc != 0
+          }}
+
+    - name: Instalar Docker quando necessário
+      when: docker_install_required
+      block:
+        - name: Validar distribuição Linux
+          ansible.builtin.assert:
+            that:
+              - ansible_distribution == "Ubuntu"
+            fail_msg: >-
+              Esta versão do playbook foi preparada para Ubuntu.
+
+        - name: Remover pacotes Docker conflitantes
+          ansible.builtin.apt:
+            name: "{{ docker_conflicting_packages }}"
+            state: absent
+
+        - name: Instalar dependências do repositório Docker
+          ansible.builtin.apt:
+            name:
+              - ca-certificates
+              - curl
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Criar diretório de chaves APT
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Baixar chave oficial do Docker
+          ansible.builtin.get_url:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            dest: /etc/apt/keyrings/docker.asc
+            owner: root
+            group: root
+            mode: "0644"
+
+        - name: Identificar arquitetura do sistema
+          ansible.builtin.command:
+            argv:
+              - dpkg
+              - --print-architecture
+          register: docker_architecture
+          changed_when: false
+
+        - name: Configurar repositório oficial do Docker
+          ansible.builtin.copy:
+            dest: /etc/apt/sources.list.d/docker.sources
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              Types: deb
+              URIs: https://download.docker.com/linux/ubuntu
+              Suites: {{ ansible_distribution_release }}
+              Components: stable
+              Architectures: {{ docker_architecture.stdout }}
+              Signed-By: /etc/apt/keyrings/docker.asc
+
+        - name: Instalar Docker Engine e Docker Compose
+          ansible.builtin.apt:
+            name: "{{ docker_packages }}"
+            state: present
+            update_cache: true
+
+        - name: Iniciar e habilitar o Docker
+          ansible.builtin.service:
+            name: docker
+            state: started
+            enabled: true
+          when: ansible_service_mgr == "systemd"
+
+    - name: Validar acesso ao Docker Engine
+      ansible.builtin.command:
+        argv:
+          - docker
+          - info
+      changed_when: false
+
+    - name: Validar Docker Compose
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - version
+      register: docker_compose_version
+      changed_when: false
+
+    # =====================================================
+    # Estrutura de diretórios
+    # =====================================================
+
+    - name: Criar diretórios da aplicação
+      ansible.builtin.file:
+        path: "{{ project_dest_dir }}/{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - path: ""
+          mode: "0755"
+
+        - path: cmd/http-server
+          mode: "0755"
+
+        - path: nginx/conf.d
+          mode: "0755"
+
+        - path: prometheus
+          mode: "0755"
+
+        - path: grafana/provisioning/datasources
+          mode: "0755"
+
+        - path: grafana/provisioning/dashboards
+          mode: "0755"
+
+        - path: grafana/dashboards
+          mode: "0755"
+
+        - path: secrets
+          mode: "0700"
+
+    # =====================================================
+    # Cópia dos arquivos do projeto
+    # =====================================================
+
+    - name: Copiar arquivos da aplicação e infraestrutura
+      ansible.builtin.copy:
+        src: "{{ project_source_dir }}/{{ item }}"
+        dest: "{{ project_dest_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - Dockerfile
+        - compose.yaml
+        - go.mod
+        - go.sum
+        - .dockerignore
+        - cmd/http-server/main.go
+        - nginx/conf.d/http-server-projeto-korp.conf
+        - prometheus/prometheus.yml
+        - grafana/provisioning/datasources/prometheus.yml
+        - grafana/provisioning/dashboards/dashboards.yml
+        - grafana/dashboards/http-server-projeto-korp-dashboard.json
+
+    - name: Criar secret administrativo do Grafana
+      ansible.builtin.copy:
+        content: "{{ vault_grafana_admin_password }}"
+        dest: "{{ project_dest_dir }}/secrets/grafana_admin_password"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    # =====================================================
+    # Rede Docker bridge
+    # =====================================================
+
+    - name: Verificar se a rede Docker existe
+      ansible.builtin.command:
+        argv:
+          - docker
+          - network
+          - inspect
+          - "{{ docker_network_name }}"
+      register: docker_network_check
+      changed_when: false
+      failed_when: false
+
+    - name: Criar rede Docker bridge
+      ansible.builtin.command:
+        argv:
+          - docker
+          - network
+          - create
+          - --driver
+          - bridge
+          - "{{ docker_network_name }}"
+      when: docker_network_check.rc != 0
+
+    # =====================================================
+    # Docker Compose
+    # =====================================================
+
+    - name: Validar arquivo Docker Compose
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-name
+          - "{{ compose_project_name }}"
+          - config
+      args:
+        chdir: "{{ project_dest_dir }}"
+      changed_when: false
+
+    - name: Construir imagem e iniciar containers
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-name
+          - "{{ compose_project_name }}"
+          - up
+          - -d
+          - --build
+          - --remove-orphans
+      args:
+        chdir: "{{ project_dest_dir }}"
+      register: compose_up_result
+
+    # =====================================================
+    # Validação da aplicação
+    # =====================================================
+
+    - name: Aguardar endpoint principal responder
+      ansible.builtin.uri:
+        url: "{{ service_url }}"
+        method: GET
+        status_code: 200
+        return_content: true
+        timeout: 5
+      register: service_response
+      retries: 20
+      delay: 3
+      until:
+        - service_response.status == 200
+        - service_response.json.nome == "Projeto Korp"
+
+    - name: Validar conteúdo retornado pela aplicação
+      ansible.builtin.assert:
+        that:
+          - service_response.json.nome == "Projeto Korp"
+          - service_response.json.horario | regex_search("Z$")
+        success_msg: >-
+          Aplicação retornou nome e horário UTC corretamente.
+        fail_msg: >-
+          A resposta da aplicação não possui o formato esperado.
+
+    # =====================================================
+    # Validação do Prometheus
+    # =====================================================
+
+    - name: Aguardar Prometheus ficar disponível
+      ansible.builtin.uri:
+        url: "{{ prometheus_ready_url }}"
+        method: GET
+        status_code: 200
+        timeout: 5
+      register: prometheus_response
+      retries: 20
+      delay: 3
+      until: prometheus_response.status == 200
+
+    - name: Consultar disponibilidade da aplicação no Prometheus
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22http-server-projeto-korp%22%7D
+        method: GET
+        status_code: 200
+        return_content: true
+        timeout: 5
+      register: prometheus_up_response
+      retries: 10
+      delay: 3
+      until:
+        - prometheus_up_response.status == 200
+        - prometheus_up_response.json.data.result | length > 0
+
+    - name: Validar métrica de disponibilidade
+      ansible.builtin.assert:
+        that:
+          - prometheus_up_response.json.data.result[0].value[1] == "1"
+        success_msg: >-
+          Prometheus está coletando a aplicação com estado UP.
+        fail_msg: >-
+          A aplicação não está UP no Prometheus.
+
+    # =====================================================
+    # Validação do Grafana
+    # =====================================================
+
+    - name: Aguardar Grafana ficar disponível
+      ansible.builtin.uri:
+        url: "{{ grafana_health_url }}"
+        method: GET
+        status_code: 200
+        return_content: true
+        timeout: 5
+      register: grafana_response
+      retries: 20
+      delay: 3
+      until:
+        - grafana_response.status == 200
+        - grafana_response.json.database == "ok"
+
+    # =====================================================
+    # Exibição do resultado
+    # =====================================================
+
+    - name: Consultar status dos containers
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-name
+          - "{{ compose_project_name }}"
+          - ps
+      args:
+        chdir: "{{ project_dest_dir }}"
+      register: compose_status
+      changed_when: false
+
+    - name: Exibir containers em execução
+      ansible.builtin.debug:
+        var: compose_status.stdout_lines
+
+    - name: Exibir resultado do provisionamento
+      ansible.builtin.debug:
+        msg:
+          - "Status HTTP: {{ service_response.status }}"
+          - "Resposta: {{ service_response.content }}"
+          - "Prometheus: UP"
+          - "Grafana database: {{ grafana_response.json.database }}"

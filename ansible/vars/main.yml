@@ -1,0 +1,27 @@
+---
+project_source_dir: "{{ playbook_dir }}/.."
+project_dest_dir: /opt/http-server-projeto-korp
+
+compose_project_name: korp
+docker_network_name: projeto-korp-network
+
+service_url: http://127.0.0.1/projeto-korp
+prometheus_ready_url: http://127.0.0.1:9090/-/ready
+grafana_health_url: http://127.0.0.1:3000/api/health
+
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+docker_conflicting_packages:
+  - docker.io
+  - docker-compose
+  - docker-compose-v2
+  - docker-doc
+  - docker-buildx
+  - podman-docker
+  - containerd
+  - runc

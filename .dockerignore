@@ -1,0 +1,6 @@
+bin/
+http-server-projeto-korp
+*.log
+.env# Segredos locais
+secrets/
+
