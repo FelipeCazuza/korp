@@ -26,7 +26,7 @@
       register: docker_check
       changed_when: false
       failed_when: false
-
+      become: false
     - name: Verificar se o Docker Compose está instalado
       ansible.builtin.command:
         argv:
@@ -36,6 +36,7 @@
       register: docker_compose_check
       changed_when: false
       failed_when: false
+      become: false
 
     - name: Definir se o Docker precisa ser instalado
       ansible.builtin.set_fact:
