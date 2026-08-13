@@ -27,6 +27,7 @@
       changed_when: false
       failed_when: false
       become: false
+
     - name: Verificar se o Docker Compose está instalado
       ansible.builtin.command:
         argv:
@@ -121,12 +122,14 @@
             enabled: true
           when: ansible_service_mgr == "systemd"
 
+    # Essas validações não precisam de root.
     - name: Validar acesso ao Docker Engine
       ansible.builtin.command:
         argv:
           - docker
           - info
       changed_when: false
+      become: false
 
     - name: Validar Docker Compose
       ansible.builtin.command:
@@ -136,6 +139,7 @@
           - version
       register: docker_compose_version
       changed_when: false
+      become: false
 
     # =====================================================
     # Estrutura de diretórios
