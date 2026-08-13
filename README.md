@@ -8,8 +8,6 @@ A aplicação é monitorada pelo Prometheus, com visualização das métricas em
 
 Todo o ambiente pode ser instalado, implantado e validado automaticamente por meio de um playbook Ansible.
 
-> Este é um projeto independente, desenvolvido para fins de estudo e demonstração técnica, sem vínculo oficial com empresas ou produtos citados durante sua elaboração.
-
 ---
 
 ## Arquitetura
